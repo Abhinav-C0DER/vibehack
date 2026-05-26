@@ -11,40 +11,55 @@ from jose import jwt, JWTError
 # --- 1. Connection & Disconnection ---
 
 @sio.event
-async def connect(sid, environ):
+async def connect(sid, environ, auth=None):
     print(f"👻 Client connected: {sid}")
+    return True
 
 @sio.event
 async def disconnect(sid):
     print(f"👋 Client disconnected: {sid}")
     
-    # Retrieve the user's session data to know which room they were in
+    # Retrieve the user's session data securely
     session = await sio.get_session(sid)
-    if session and "room" in session:
-        room_name = session["room"]
-        username = session["username"]
+    if not session or "room" not in session:
+        return
         
-        # Delete ghost to SID mapping
-        redis_client.delete(f"ghost_to_sid:{username}")
-        
-        # 1. Leave the Socket.IO room
+    room_name = session["room"]
+    username = session["username"]
+    
+    # Delete ghost to SID mapping securely
+    redis_client.delete(f"ghost_to_sid:{username}")
+    
+    # 1. Leave the Socket.IO core broadcast room
+    try:
         await sio.leave_room(sid, room_name)
-        
-        # 2. Tell Redis they left. If it returns True, the room vanished!
+    except Exception:
+        pass
+    
+    # 2. Remove the specific user from the Redis set first
+    redis_client.srem(f"room_users:{room_name}", username)
+    
+    # 3. Tell RoomManager they left on EVERY disconnect so internal counters decrement correctly
+    vanished = False
+    try:
         vanished = RoomManager.leave_room(room_name)
+    except Exception as e:
+        print(f"⚠️ RoomManager tracking error: {e}")
+    
+    # 4. Check if the room has completely emptied out
+    remaining_count = redis_client.scard(f"room_users:{room_name}")
+    
+    if vanished or remaining_count <= 0:
+        print(f"💥 Room '{room_name}' vanished into the void (0 active ghosts remaining).")
+        redis_client.delete(f"room_users:{room_name}")
+    else:
+        # Broadcast updated users list to the ghosts still inside the room
+        active_users = list(redis_client.smembers(f"room_users:{room_name}"))
+        active_users = [u.decode('utf-8') if isinstance(u, bytes) else u for u in active_users]
+        await sio.emit("room_users", {"users": active_users}, room=room_name)
         
-        if vanished:
-            print(f"💥 Room '{room_name}' vanished into the void.")
-            redis_client.delete(f"room_users:{room_name}")
-        else:
-            # Remove from room users set in Redis
-            redis_client.srem(f"room_users:{room_name}", username)
-            # Broadcast updated users list
-            active_users = list(redis_client.smembers(f"room_users:{room_name}"))
-            await sio.emit("room_users", {"users": active_users}, room=room_name)
-            
-            # Tell the remaining people in the room that someone left
-            await sio.emit("system_message", {"msg": f"{username} faded away."}, room=room_name)
+        # Tell the remaining people in the room that someone left
+        await sio.emit("system_message", {"msg": f"{username} faded away."}, room=room_name)
 
 # --- 2. Secure Room Management ---
 
@@ -97,11 +112,17 @@ async def join_room(sid, data):
     redis_client.sadd(f"room_users:{room_name}", ghost_name)
     redis_client.expire(f"room_users:{room_name}", 86400)
     
-    # 5. Broadcast updated user list and welcoming announcements
-    active_users = list(redis_client.smembers(f"room_users:{room_name}"))
-    await sio.emit("room_users", {"users": active_users}, room=room_name)
-    
-    await sio.emit("system_message", {"msg": f"Welcome to {room_name}, {ghost_name}."}, to=sid)
-    await sio.emit("system_message", {"msg": f"{ghost_name} manifested in the room."}, room=room_name, skip_sid=sid)
+# 5. Broadcast updated user list and welcoming announcements securely
+    try:
+        active_users = list(redis_client.smembers(f"room_users:{room_name}"))
+        # Force decode items to string if Redis returns raw bytes
+        active_users = [u.decode('utf-8') if isinstance(u, bytes) else u for u in active_users]
+        
+        await sio.emit("room_users", {"users": active_users}, room=room_name)
+        
+        await sio.emit("system_message", {"msg": f"Welcome to {room_name}, {ghost_name}."}, to=sid)
+        await sio.emit("system_message", {"msg": f"{ghost_name} manifested in the room."}, room=room_name, skip_sid=sid)
+    except Exception as e:
+        print(f"⚠️ Warning during join broadcast chain: {e}")
     
     return {"status": "joined", "username": ghost_name, "sid": sid}

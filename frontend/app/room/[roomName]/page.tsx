@@ -1,15 +1,31 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { io, Socket } from "socket.io-client";
 import { 
   Ghost, Hash, Users, Send, ArrowLeft, Gift, 
-  MessageSquareOff, MessageSquare, Sparkles, Radio, X, ShieldAlert as ReportIcon
+  MessageSquareOff, MessageSquare, Sparkles, Radio, X, 
+  ShieldAlert as ReportIcon, Info, HelpCircle
 } from "lucide-react";
-import api from "@/lib/api";
 import axios from "axios";
+
+// Inline API configuration to avoid import alias resolution issues
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const api = {
+  get: (url: string) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
+    return axios.get(`${apiBaseUrl}${url}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+  },
+  post: (url: string, data?: any) => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
+    return axios.post(`${apiBaseUrl}${url}`, data, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+  }
+};
 
 interface ChatMessage {
   id: string;
@@ -48,10 +64,7 @@ interface RoomUsersData {
 }
 
 export default function RoomPage() {
-  const params = useParams();
-  const router = useRouter();
-  
-  const roomName = typeof params.roomName === "string" ? params.roomName : "";
+  const [roomName, setRoomName] = useState("");
   const [roomCategory, setRoomCategory] = useState("General");
   
   const [myGhostName, setMyGhostName] = useState("");
@@ -68,18 +81,55 @@ export default function RoomPage() {
   const [inspectedProfile, setInspectedProfile] = useState<InspectedProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
 
-  // Animations/Success banners
+  // Custom UI notification states (replacing alert/confirm triggers)
+  const [customAlert, setCustomAlert] = useState<{ message: string; type: "error" | "info" | "success" } | null>(null);
+  const [showReportConfirm, setShowReportConfirm] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
 
   const socketRef = useRef<Socket | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  
+  // Refs for managing scrolling and bypassing state cycles
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const myGhostNameRef = useRef("");
+
+  // Safe router navigation abstraction
+  const navigateTo = useCallback((path: string) => {
+    if (typeof window !== "undefined") {
+      window.location.href = path;
+    }
+  }, []);
+
+  // Quick helper to spawn custom notifications
+  const triggerNotification = useCallback((message: string, type: "error" | "info" | "success" = "info") => {
+    setCustomAlert({ message, type });
+  }, []);
+
+  // Sync ref with state updates
+  useEffect(() => {
+    myGhostNameRef.current = myGhostName;
+  }, [myGhostName]);
+
+  // Parse path parameter on mount (grabs whatever is after /room/)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const paths = window.location.pathname.split("/");
+      const roomIdx = paths.indexOf("room");
+      if (roomIdx !== -1 && paths[roomIdx + 1]) {
+        setRoomName(decodeURIComponent(paths[roomIdx + 1]));
+      } else {
+        setRoomName("general-lobby");
+      }
+    }
+  }, []);
 
   useEffect(() => {
+    if (!roomName) return;
+
     // 1. Verify Authentication
     const token = localStorage.getItem("token");
     const storedUser = localStorage.getItem("username");
     if (!token || !storedUser) {
-      router.push("/");
+      navigateTo("/");
       return;
     }
 
@@ -87,8 +137,12 @@ export default function RoomPage() {
     const category = localStorage.getItem(`room_cat:${roomName}`) || "General";
     setRoomCategory(category);
 
-    // 2. Connect Sockets on http://localhost:8000
-    const socket = io("http://localhost:8000");
+    // 2. Connect Sockets to local backend instance
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:8000";
+    const socket = io(socketUrl, {
+      transports: ["websocket"],
+      autoConnect: true,
+    });
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -101,8 +155,10 @@ export default function RoomPage() {
         token: token
       }, (response: JoinRoomResponse) => {
         if (response.status === "rejected") {
-          alert(response.error || "Manifestation rejected by the void.");
-          router.push("/dashboard");
+          triggerNotification(response.error || "Manifestation rejected by the void.", "error");
+          setTimeout(() => {
+            navigateTo("/dashboard");
+          }, 3000);
         } else {
           setMyGhostName(response.username);
         }
@@ -124,12 +180,15 @@ export default function RoomPage() {
     });
 
     socket.on("system_message", (data: SystemMessageData) => {
-      // If we got kicked or someone banned, check if it was us
-      if (data.msg.includes("EXORCISED") && data.msg.includes(myGhostName) && myGhostName !== "") {
-        alert("You have been exorcised from the void (3/3 Reports).");
-        localStorage.removeItem("token");
-        localStorage.removeItem("username");
-        router.push("/");
+      // Use the ref representation to eliminate re-trigger side effects
+      const currentName = myGhostNameRef.current;
+      if (data.msg.includes("EXORCISED") && data.msg.includes(currentName) && currentName !== "") {
+        triggerNotification("You have been exorcised from the void (3/3 Reports).", "error");
+        setTimeout(() => {
+          localStorage.removeItem("token");
+          localStorage.removeItem("username");
+          navigateTo("/");
+        }, 3500);
         return;
       }
       setMessages((prev) => [
@@ -174,11 +233,17 @@ export default function RoomPage() {
         socket.disconnect();
       }
     };
-  }, [roomName, myGhostName, router]);
+    // REMOVED myGhostName from the dependencies list to block the infinite reconnection engine loop
+  }, [roomName, navigateTo, triggerNotification]);
 
-  // Auto-scroll chat feed
+  // Safe and local scroll to bottom without affecting browser page layout positioning
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
   }, [messages]);
 
   const handleSendMessage = () => {
@@ -242,16 +307,21 @@ export default function RoomPage() {
       setTimeout(() => setSuccessMsg(""), 3000);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.data?.detail) {
-        alert(err.response.data.detail);
+        triggerNotification(err.response.data.detail, "error");
       } else {
-        alert("Points transaction failed.");
+        triggerNotification("Points transaction failed.", "error");
       }
     }
   };
 
   const handleReportGhost = async () => {
     if (!inspectedGhost) return;
-    if (!confirm(`Are you sure you want to report ${inspectedGhost} for fake/bot activity? 3 reports will ban them permanently.`)) return;
+    setShowReportConfirm(true);
+  };
+
+  const executeReportGhost = async () => {
+    setShowReportConfirm(false);
+    if (!inspectedGhost) return;
 
     try {
       const response = await api.post(`/users/report/${inspectedGhost}?room_name=${roomName}`);
@@ -263,9 +333,9 @@ export default function RoomPage() {
       setTimeout(() => setSuccessMsg(""), 4000);
     } catch (err) {
       if (axios.isAxiosError(err) && err.response?.data?.detail) {
-        alert(err.response.data.detail);
+        triggerNotification(err.response.data.detail, "error");
       } else {
-        alert("Report registration failed.");
+        triggerNotification("Report registration failed.", "error");
       }
     }
   };
@@ -280,7 +350,7 @@ export default function RoomPage() {
       setInspectedGhost(null);
       setInspectedProfile(null);
     } else {
-      alert("This ghost has already faded away and cannot receive whispers.");
+      triggerNotification("This ghost has already faded away and cannot receive whispers.", "info");
     }
   };
 
@@ -294,16 +364,16 @@ export default function RoomPage() {
   };
 
   return (
-    <div className="min-h-screen bg-void text-ghost-white flex flex-col relative overflow-hidden font-sans">
+    <div className="min-h-screen h-screen max-h-screen bg-void text-ghost-white flex flex-col relative overflow-hidden font-sans">
       {/* Background Gradients */}
       <div className="absolute top-[-30%] left-[-10%] w-[50%] h-[50%] bg-ghost-cyan/5 blur-[150px] rounded-full pointer-events-none" />
       <div className="absolute bottom-[-30%] right-[-10%] w-[50%] h-[50%] bg-ghost-lime/5 blur-[150px] rounded-full pointer-events-none" />
 
       {/* Header */}
-      <header className="px-6 py-4 border-b border-white/5 glass flex items-center justify-between z-10 relative">
+      <header className="px-6 py-4 border-b border-white/5 glass flex items-center justify-between z-10 relative flex-shrink-0">
         <div className="flex items-center gap-4">
           <button 
-            onClick={() => router.push("/dashboard")}
+            onClick={() => navigateTo("/dashboard")}
             className="p-2 border border-white/5 hover:border-white/10 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -347,6 +417,80 @@ export default function RoomPage() {
         )}
       </AnimatePresence>
 
+      {/* CUSTOM ALERT BOX (replaces alert()) */}
+      <AnimatePresence>
+        {customAlert && (
+          <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="glass p-6 rounded-[2rem] border border-white/10 max-w-sm w-full text-center space-y-4"
+            >
+              <div className="flex justify-center">
+                {customAlert.type === "error" ? (
+                  <ReportIcon className="w-12 h-12 text-red-500 animate-pulse" />
+                ) : (
+                  <Info className="w-12 h-12 text-ghost-cyan" />
+                )}
+              </div>
+              <h3 className="text-white text-base font-bold font-mono uppercase tracking-wide">
+                {customAlert.type === "error" ? "Void Exception" : "System Frequency"}
+              </h3>
+              <p className="text-gray-400 text-xs font-mono leading-relaxed">
+                {customAlert.message}
+              </p>
+              <button 
+                onClick={() => setCustomAlert(null)}
+                className="w-full py-3 bg-white/5 hover:bg-white/10 text-white font-mono rounded-xl border border-white/10 transition-all cursor-pointer text-xs uppercase"
+              >
+                Acknowledge Wave
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* CUSTOM CONFIRMATION DIALOG (replaces confirm() for Reports) */}
+      <AnimatePresence>
+        {showReportConfirm && (
+          <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="glass p-6 rounded-[2rem] border border-white/10 max-w-sm w-full text-center space-y-4"
+            >
+              <div className="flex justify-center">
+                <HelpCircle className="w-12 h-12 text-purple-400 animate-bounce" />
+              </div>
+              <h3 className="text-white text-base font-bold font-mono uppercase tracking-wide">
+                Exorcism Registration
+              </h3>
+              <p className="text-gray-400 text-xs font-mono leading-relaxed">
+                Are you sure you want to report <span className="text-ghost-cyan font-bold">{inspectedGhost}</span> for bot or hostile frequencies? 
+                <br /><br />
+                <span className="text-red-400 font-bold">3 reports will ban them permanently.</span>
+              </p>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button 
+                  onClick={() => setShowReportConfirm(false)}
+                  className="py-3 bg-white/5 hover:bg-white/10 text-gray-400 font-mono rounded-xl border border-white/10 transition-all cursor-pointer text-xs"
+                >
+                  DISMISS
+                </button>
+                <button 
+                  onClick={executeReportGhost}
+                  className="py-3 bg-red-500 hover:bg-red-600 text-white font-mono rounded-xl transition-all cursor-pointer text-xs shadow-md shadow-red-500/20"
+                >
+                  CONFIRM FLAG
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Main Workspace */}
       <div className="flex-1 max-w-7xl w-full mx-auto grid grid-cols-12 overflow-hidden relative z-10 p-6 gap-6 h-[calc(100vh-80px)]">
         
@@ -354,7 +498,10 @@ export default function RoomPage() {
         <div className="col-span-12 lg:col-span-9 flex flex-col h-full bg-black/20 border border-white/5 rounded-[2rem] p-6 relative overflow-hidden">
           
           {/* Scrollable Message Box */}
-          <div className="flex-1 overflow-y-auto space-y-4 pr-2 select-text">
+          <div 
+            ref={chatContainerRef}
+            className="flex-1 overflow-y-auto space-y-4 pr-2 select-text"
+          >
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center font-mono text-gray-500 text-sm text-center">
                 <MessageSquare className="w-12 h-12 text-gray-700 mb-3 animate-pulse" />
@@ -385,7 +532,7 @@ export default function RoomPage() {
                     {/* Ghost Avatar */}
                     <div 
                       onClick={() => !isMe && handleInspectGhost(msg.sender)}
-                      className={`w-9 h-9 rounded-xl border p-1 bg-black/40 flex-shrink-0 cursor-pointer overflow-hidden ${
+                      className={`w-9 h-9 rounded-xl border p-1 bg-black/40 flex-shrink-0 cursor-pointer overflow-hidden transition-colors ${
                         msg.is_whisper 
                           ? "border-purple-500/30 hover:border-purple-400" 
                           : isMe 
@@ -433,12 +580,11 @@ export default function RoomPage() {
                 );
               })
             )}
-            <div ref={messagesEndRef} />
           </div>
 
           {/* WHISPER ALERT HEADER */}
           {whisperTarget && (
-            <div className="mt-4 px-4 py-2 bg-purple-500/10 border border-purple-500/20 rounded-2xl text-xs font-mono text-purple-400 flex items-center justify-between animate-pulse">
+            <div className="mt-4 px-4 py-2 bg-purple-500/10 border border-purple-500/20 rounded-2xl text-xs font-mono text-purple-400 flex items-center justify-between animate-pulse flex-shrink-0">
               <span className="flex items-center gap-2">
                 <Sparkles className="w-3.5 h-3.5 animate-spin duration-3000" />
                 Whispering to {whisperTarget.ghostName}
@@ -453,7 +599,7 @@ export default function RoomPage() {
           )}
 
           {/* Message Input Box */}
-          <div className="mt-4 flex gap-3">
+          <div className="mt-4 flex gap-3 flex-shrink-0">
             <input 
               type="text" 
               placeholder={
@@ -492,7 +638,7 @@ export default function RoomPage() {
         {/* SIDEBAR: ACTIVE PARTICIPANTS (Grid Col 3) */}
         <div className="col-span-12 lg:col-span-3 flex flex-col h-full bg-black/20 border border-white/5 rounded-[2rem] p-6 relative overflow-hidden">
           
-          <div className="flex items-center gap-2 mb-6 text-sm font-mono text-ghost-cyan uppercase tracking-wider">
+          <div className="flex items-center gap-2 mb-6 text-sm font-mono text-ghost-cyan uppercase tracking-wider flex-shrink-0">
             <Users className="w-4 h-4" />
             <span>MANIFESTED ({activeUsers.length})</span>
           </div>
@@ -529,7 +675,7 @@ export default function RoomPage() {
                   </div>
 
                   {isMe && (
-                    <span className="text-[9px] font-mono px-2 py-0.5 bg-ghost-lime/10 border border-ghost-lime/20 rounded-md text-ghost-lime">
+                    <span className="text-[9px] font-mono px-2 py-0.5 bg-ghost-lime/10 border border-ghost-lime/20 rounded-md text-ghost-lime flex-shrink-0">
                       YOU
                     </span>
                   )}

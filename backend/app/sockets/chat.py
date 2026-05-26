@@ -60,25 +60,33 @@ async def heartbeat(sid):
     if not session:
         return
         
-    # Every time the frontend 'pings', increment points in the DB
-    # (In production, you'd only do this every 5 or 10 pings to save resources)
-   
-    
-    room = session.get("room")
-    # We need the real username from our Redis pointer!
     ghost_name = session.get("username")
-    real_username = redis_client.get(f"ghost_pointer:{ghost_name}")
+    if not ghost_name:
+        return
+
+    # Fetch the pointer
+    raw_username = redis_client.get(f"ghost_pointer:{ghost_name}")
+    if not raw_username:
+        return
+        
+    # Safeguard: Force decode to string if it somehow arrives as raw bytes
+    real_username = raw_username.decode('utf-8') if isinstance(raw_username, bytes) else raw_username
     
-    if real_username:
-        with Session(engine) as db:
-            statement = select(User).where(User.username == real_username)
-            user = db.exec(statement).first()
-            if user:
-                if user.is_banned:
-                    # Exorcise them immediately!
-                    await sio.disconnect(sid)
-                    return
-                user.auth_points += 1
-                db.add(user)
-                db.commit()
+    with Session(engine) as db:
+        statement = select(User).where(User.username == real_username)
+        user = db.exec(statement).first()
+        
+        # FIX: Ensure user object exists before validating properties!
+        if user:
+            if user.is_banned:
+                print(f"🚫 Banned user {real_username} attempted heartbeat pulse. Exorcising.")
+                await sio.disconnect(sid)
+                return
+                
+            # Safely award experience/authenticity points over live waves
+            user.auth_points += 1
+            db.add(user)
+            db.commit()
+        else:
+            print(f"⚠️ Heartbeat skipped: No db anchor found for user '{real_username}'")
 

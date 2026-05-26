@@ -10,21 +10,35 @@
 }
 
 :root {
-  background-color: #0A0A0A;
+  background-color: var(--color-void);
 }
 
 body {
-  background-color: #0A0A0A;
-  color: #F8F8F8;
+  background-color: var(--color-void);
+  color: var(--color-ghost-white);
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Spectral Custom Glass Utility Classes */
 .glass {
   background: rgba(255, 255, 255, 0.02);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-ghost-border);
 }
 
 .text-glow-cyan {
   text-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+}
+
+/* Custom Minimalist Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-void);
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 10px;
 }

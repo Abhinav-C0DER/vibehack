@@ -44,3 +44,6 @@ def read_root():
     return {"message": "Welcome to the Vibehack API. The ghosts are waiting."}
 # Create the ASGI application that handles both HTTP and WebSockets
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
+
+# Overwrite or re-bind the primary routing instance for Uvicorn
+app = socket_app

@@ -1,0 +1,61 @@
+# ==============================================================================
+# 👻 Vibehack Project Master .gitignore
+# ==============================================================================
+
+# 🐍 --- Python Backend (app/uv/venv) ---
+backend/.venv/
+backend/env/
+backend/ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/.mypy_cache/
+
+# 🗄️ --- Persistent Local Databases ---
+backend/*.db
+backend/*.db-journal
+backend/*.sqlite3
+
+# ⚛️ --- Frontend (Node / Next.js) ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/.eslintcache
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# 🔑 --- Secrets & Local Environment Configs ---
+.env
+.env.local
+.env.development.local
+.env.production.local
+frontend/.env
+frontend/.env.local
+backend/.env
+
+# 🐧 --- OS / System Specific Files (Arch/Linux) ---
+.DS_Store
+.Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+.history/
+
+# 🔑 --- Secrets & Local Environment Configs ---
+.env
+.env.local
+backend/.env
+frontend/.env
+
+# Custom CLI Configurations
+.antigravitycli/
