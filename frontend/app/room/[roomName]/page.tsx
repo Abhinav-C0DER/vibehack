@@ -68,11 +68,11 @@ export default function RoomPage() {
     socket.on("connect", () => {
       setConnected(true);
       
-      // Emit Join Room and handle callbacks
+      // Emit Join Room and handle callbacks securely with JWT token
       socket.emit("join_room", {
         room_name: roomName,
         category: category,
-        permanent_username: storedUser
+        token: token
       }, (response: any) => {
         if (response.status === "rejected") {
           alert(response.error || "Manifestation rejected by the void.");

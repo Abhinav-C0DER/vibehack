@@ -1,9 +1,9 @@
 import socketio
 from app.api import auth, rooms, users
 from app.sockets.server import sio
-import app.sockets.chat  # This imports the events so they register!
+import app.sockets.connection  # Register connection/disconnection & join_room handlers
+import app.sockets.chat        # Register messaging & whispering handlers
 from fastapi import FastAPI
-from app.api import auth, rooms  # <-- Add rooms here
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 

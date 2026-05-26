@@ -40,7 +40,9 @@ def get_ghost_profile(ghost_name: str, db: Session = Depends(get_session)):
         
     # 2. Fetch their public info from Postgres
     user = db.exec(select(User).where(User.username == real_username)).first()
-    
+    if not user:
+        raise HTTPException(status_code=404, detail="Identity anchor has faded from persistent memory.")
+        
     # 3. Get their active Socket SID
     target_sid = redis_client.get(f"ghost_to_sid:{ghost_name}")
     

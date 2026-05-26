@@ -1,11 +1,13 @@
 from sqlmodel import create_engine, Session, SQLModel
-import os
-from dotenv import load_dotenv
+from app.core.config import settings
 
-load_dotenv()
+db_url = settings.DATABASE_URL
 
-sqlite_url = os.getenv("DATABASE_URL")
-engine = create_engine(sqlite_url, connect_args={"check_same_thread": False})
+# Only pass check_same_thread argument if using SQLite
+if db_url.startswith("sqlite"):
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(db_url)
 
 def init_db():
     SQLModel.metadata.create_all(engine)
