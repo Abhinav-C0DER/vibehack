@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Ghost, ShieldCheck, Zap, Sparkles, AlertTriangle } from "lucide-react";
 import api from "@/lib/api";
+import axios from "axios";
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -50,8 +51,8 @@ export default function AuthPage() {
         setIsLogin(true);
         setErrorMsg("Manifestation complete. Log in to enter the void.");
       }
-    } catch (err: any) {
-      if (err.response && err.response.data && err.response.data.detail) {
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.data?.detail) {
         setErrorMsg(err.response.data.detail);
       } else {
         setErrorMsg("The Void rejected your credentials. Try again.");

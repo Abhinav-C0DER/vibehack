@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { 
@@ -9,11 +9,26 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 
+interface UserProfile {
+  username: string;
+  bio?: string;
+  auth_points: number;
+}
+
+interface ChatRoom {
+  room_name: string;
+  category: string;
+  user_count: number;
+  score?: number;
+  is_recommended?: boolean;
+  match_score?: number;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
-  const [recommendedRooms, setRecommendedRooms] = useState<any[]>([]);
-  const [otherRooms, setOtherRooms] = useState<any[]>([]);
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [recommendedRooms, setRecommendedRooms] = useState<ChatRoom[]>([]);
+  const [otherRooms, setOtherRooms] = useState<ChatRoom[]>([]);
   const [matchedKeywords, setMatchedKeywords] = useState<string[]>([]);
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomCategory, setNewRoomCategory] = useState("General");
@@ -21,6 +36,34 @@ export default function DashboardPage() {
   const [isEditingBio, setIsEditingBio] = useState(false);
   const [updatingBio, setUpdatingBio] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(true);
+
+  const fetchProfile = useCallback(async () => {
+    try {
+      const response = await api.get("/users/me");
+      setUser(response.data);
+      setBio(response.data.bio || "");
+    } catch (err) {
+      console.error("Failed to load user profile:", err);
+      // Token expired or invalid
+      localStorage.removeItem("token");
+      localStorage.removeItem("username");
+      router.push("/");
+    }
+  }, [router]);
+
+  const fetchRooms = useCallback(async () => {
+    setLoadingRooms(true);
+    try {
+      const response = await api.get("/rooms/recommended");
+      setRecommendedRooms(response.data.recommended_rooms || []);
+      setOtherRooms(response.data.other_rooms || []);
+      setMatchedKeywords(response.data.matched_keywords || []);
+    } catch (err) {
+      console.error("Failed to load recommended rooms:", err);
+    } finally {
+      setLoadingRooms(false);
+    }
+  }, []);
 
   useEffect(() => {
     // 1. Check Auth
@@ -33,34 +76,7 @@ export default function DashboardPage() {
     // 2. Fetch Profile & Rooms
     fetchProfile();
     fetchRooms();
-  }, []);
-
-  const fetchProfile = async () => {
-    try {
-      const response = await api.get("/users/me");
-      setUser(response.data);
-      setBio(response.data.bio || "");
-    } catch (err) {
-      // Token expired or invalid
-      localStorage.removeItem("token");
-      localStorage.removeItem("username");
-      router.push("/");
-    }
-  };
-
-  const fetchRooms = async () => {
-    setLoadingRooms(true);
-    try {
-      const response = await api.get("/rooms/recommended");
-      setRecommendedRooms(response.data.recommended_rooms || []);
-      setOtherRooms(response.data.other_rooms || []);
-      setMatchedKeywords(response.data.matched_keywords || []);
-    } catch (err) {
-      console.error("Failed to load recommended rooms");
-    } finally {
-      setLoadingRooms(false);
-    }
-  };
+  }, [router, fetchProfile, fetchRooms]);
 
   const handleUpdateBio = async () => {
     setUpdatingBio(true);
@@ -71,6 +87,7 @@ export default function DashboardPage() {
       // Refresh rooms since recommendations depend on bio!
       fetchRooms();
     } catch (err) {
+      console.error("Failed to update bio:", err);
       alert("Failed to update bio in the void.");
     } finally {
       setUpdatingBio(false);
@@ -248,9 +265,14 @@ export default function DashboardPage() {
               {/* RECOMMENDED CHATROOMS (AI Sparkle matching user's bio interests!) */}
               {recommendedRooms.length > 0 && (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-mono text-ghost-cyan uppercase tracking-wider">
+                  <div className="flex items-center gap-2 text-xs font-mono text-ghost-cyan uppercase tracking-wider flex-wrap">
                     <Sparkles className="w-4 h-4 text-ghost-cyan animate-pulse" />
-                    Recommended for Your Bio
+                    <span>Recommended for Your Bio</span>
+                    {matchedKeywords.length > 0 && (
+                      <span className="text-[10px] text-gray-500 font-normal lowercase tracking-normal bg-ghost-cyan/5 px-2 py-0.5 rounded-full border border-ghost-cyan/10">
+                        {matchedKeywords.join(", ")}
+                      </span>
+                    )}
                   </div>
 
                   <div className="space-y-3">

@@ -1,6 +1,13 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-void: #0A0A0A;
+  --color-ghost-white: #F8F8F8;
+  --color-ghost-cyan: #00FFFF;
+  --color-ghost-lime: #39FF14;
+  --color-ghost-border: rgba(255, 255, 255, 0.1);
+  --background-image-spectral-gradient: linear-gradient(to right, #00FFFF, #39FF14);
+}
 
 :root {
   background-color: #0A0A0A;

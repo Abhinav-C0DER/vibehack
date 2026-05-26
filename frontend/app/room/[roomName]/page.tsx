@@ -5,10 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { io, Socket } from "socket.io-client";
 import { 
-  Ghost, Hash, Users, Send, ArrowLeft, ShieldAlert, Gift, 
-  MessageSquareOff, MessageSquare, Sparkles, Radio, Check, X, ShieldAlert as ReportIcon
+  Ghost, Hash, Users, Send, ArrowLeft, Gift, 
+  MessageSquareOff, MessageSquare, Sparkles, Radio, X, ShieldAlert as ReportIcon
 } from "lucide-react";
 import api from "@/lib/api";
+import axios from "axios";
 
 interface ChatMessage {
   id: string;
@@ -19,6 +20,33 @@ interface ChatMessage {
   is_system?: boolean;
 }
 
+interface InspectedProfile {
+  ghost_name: string;
+  bio?: string;
+  auth_points: number;
+  sid?: string;
+}
+
+interface JoinRoomResponse {
+  status: "joined" | "rejected";
+  username: string;
+  error?: string;
+}
+
+interface SystemMessageData {
+  msg: string;
+}
+
+interface ReceiveMessageData {
+  sender: string;
+  message: string;
+  is_whisper: boolean;
+}
+
+interface RoomUsersData {
+  users: string[];
+}
+
 export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -26,7 +54,6 @@ export default function RoomPage() {
   const roomName = typeof params.roomName === "string" ? params.roomName : "";
   const [roomCategory, setRoomCategory] = useState("General");
   
-  const [username, setUsername] = useState("");
   const [myGhostName, setMyGhostName] = useState("");
   const [activeUsers, setActiveUsers] = useState<string[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -37,8 +64,8 @@ export default function RoomPage() {
   const [whisperTarget, setWhisperTarget] = useState<{ ghostName: string; sid: string } | null>(null);
 
   // Inspected ghost profile details
-  const [inspectedGhost, setInspectedGhost] = useState<any | null>(null);
-  const [inspectedProfile, setInspectedProfile] = useState<any | null>(null);
+  const [inspectedGhost, setInspectedGhost] = useState<string | null>(null);
+  const [inspectedProfile, setInspectedProfile] = useState<InspectedProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
 
   // Animations/Success banners
@@ -55,7 +82,6 @@ export default function RoomPage() {
       router.push("/");
       return;
     }
-    setUsername(storedUser);
 
     // Retrieve category from storage
     const category = localStorage.getItem(`room_cat:${roomName}`) || "General";
@@ -73,7 +99,7 @@ export default function RoomPage() {
         room_name: roomName,
         category: category,
         token: token
-      }, (response: any) => {
+      }, (response: JoinRoomResponse) => {
         if (response.status === "rejected") {
           alert(response.error || "Manifestation rejected by the void.");
           router.push("/dashboard");
@@ -97,7 +123,7 @@ export default function RoomPage() {
       ]);
     });
 
-    socket.on("system_message", (data: any) => {
+    socket.on("system_message", (data: SystemMessageData) => {
       // If we got kicked or someone banned, check if it was us
       if (data.msg.includes("EXORCISED") && data.msg.includes(myGhostName) && myGhostName !== "") {
         alert("You have been exorcised from the void (3/3 Reports).");
@@ -118,7 +144,7 @@ export default function RoomPage() {
       ]);
     });
 
-    socket.on("receive_message", (data: any) => {
+    socket.on("receive_message", (data: ReceiveMessageData) => {
       setMessages((prev) => [
         ...prev,
         {
@@ -130,7 +156,7 @@ export default function RoomPage() {
       ]);
     });
 
-    socket.on("room_users", (data: any) => {
+    socket.on("room_users", (data: RoomUsersData) => {
       setActiveUsers(data.users || []);
     });
 
@@ -148,7 +174,7 @@ export default function RoomPage() {
         socket.disconnect();
       }
     };
-  }, [roomName, myGhostName]);
+  }, [roomName, myGhostName, router]);
 
   // Auto-scroll chat feed
   useEffect(() => {
@@ -195,7 +221,7 @@ export default function RoomPage() {
       const response = await api.get(`/users/ghost/${ghostName}`);
       setInspectedProfile(response.data);
     } catch (err) {
-      console.error("Failed to fetch ghost profile info");
+      console.error("Failed to fetch ghost profile info:", err);
     } finally {
       setLoadingProfile(false);
     }
@@ -204,18 +230,22 @@ export default function RoomPage() {
   const handleGiftAP = async () => {
     if (!inspectedGhost) return;
     try {
-      const response = await api.post(`/users/gift/${inspectedGhost}`);
+      await api.post(`/users/gift/${inspectedGhost}`);
       setSuccessMsg(`Successfully gifted a reputation point to ${inspectedGhost}!`);
       // Update local profile view
       if (inspectedProfile) {
-        setInspectedProfile((prev: any) => ({
+        setInspectedProfile((prev) => prev ? ({
           ...prev,
           auth_points: (prev.auth_points || 0) + 1
-        }));
+        }) : null);
       }
       setTimeout(() => setSuccessMsg(""), 3000);
-    } catch (err: any) {
-      alert(err.response?.data?.detail || "Points transaction failed.");
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.data?.detail) {
+        alert(err.response.data.detail);
+      } else {
+        alert("Points transaction failed.");
+      }
     }
   };
 
@@ -231,8 +261,12 @@ export default function RoomPage() {
       setInspectedGhost(null);
       setInspectedProfile(null);
       setTimeout(() => setSuccessMsg(""), 4000);
-    } catch (err: any) {
-      alert(err.response?.data?.detail || "Report registration failed.");
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.data?.detail) {
+        alert(err.response.data.detail);
+      } else {
+        alert("Report registration failed.");
+      }
     }
   };
 
