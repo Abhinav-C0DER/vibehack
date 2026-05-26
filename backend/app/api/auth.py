@@ -47,6 +47,13 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             headers={"WWW-Authenticate": "Bearer"},
         )
         
+    # 2b. Check if the user is banned (exorcised)
+    if user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This identity has been exorcised from the void (banned)."
+        )
+        
     # 3. Generate the JWT Token
     access_token = create_access_token(data={"sub": user.username})
     

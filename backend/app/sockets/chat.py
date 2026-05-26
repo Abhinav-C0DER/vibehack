@@ -4,6 +4,7 @@ from app.utils.identity import generate_ghost_name
 from app.db.session import Session, engine
 from app.db.models import User
 from sqlmodel import select
+from app.redis_cache.connection import redis_client
 
 # --- 1. Connection & Disconnection ---
 
@@ -21,6 +22,9 @@ async def disconnect(sid):
         room_name = session["room"]
         username = session["username"]
         
+        # Delete ghost to SID mapping
+        redis_client.delete(f"ghost_to_sid:{username}")
+        
         # 1. Leave the Socket.IO room
         await sio.leave_room(sid, room_name)
         
@@ -29,8 +33,14 @@ async def disconnect(sid):
         
         if vanished:
             print(f"💥 Room '{room_name}' vanished into the void.")
-            # Optional: Broadcast globally that a room just vanished
+            redis_client.delete(f"room_users:{room_name}")
         else:
+            # Remove from room users set in Redis
+            redis_client.srem(f"room_users:{room_name}", username)
+            # Broadcast updated users list
+            active_users = list(redis_client.smembers(f"room_users:{room_name}"))
+            await sio.emit("room_users", {"users": active_users}, room=room_name)
+            
             # Tell the remaining people in the room that someone left
             await sio.emit("system_message", {"msg": f"{username} faded away."}, room=room_name)
 
@@ -46,13 +56,23 @@ async def join_room(sid, data):
     # NEW: Get the permanent username from the frontend's request
     permanent_username = data.get("permanent_username") 
     
+    # Check if the user is banned in Postgres
+    if permanent_username:
+        with Session(engine) as db:
+            statement = select(User).where(User.username == permanent_username)
+            user = db.exec(statement).first()
+            if user and user.is_banned:
+                return {"status": "rejected", "error": "This identity has been exorcised from the void (banned)."}
+    
     # 1. Generate their burned username
     ghost_name = generate_ghost_name()
     
     # ---> NEW: Create the pointer in Redis (Expires in 24 hours / 86400 seconds) <---
-    from app.redis_cache.connection import redis_client
     if permanent_username:
         redis_client.set(f"ghost_pointer:{ghost_name}", permanent_username, ex=86400)
+    
+    # Store the mapping from ghost name to Socket SID in Redis
+    redis_client.set(f"ghost_to_sid:{ghost_name}", sid, ex=86400)
     
     # 2. Save state to this specific connection session
     await sio.save_session(sid, {"room": room_name, "username": ghost_name})
@@ -60,6 +80,14 @@ async def join_room(sid, data):
     # 3. Add to Socket.IO room and Redis
     await sio.enter_room(sid, room_name)
     RoomManager.join_room(room_name, category)
+    
+    # Track room users in Redis
+    redis_client.sadd(f"room_users:{room_name}", ghost_name)
+    redis_client.expire(f"room_users:{room_name}", 86400)
+    
+    # Broadcast updated users list
+    active_users = list(redis_client.smembers(f"room_users:{room_name}"))
+    await sio.emit("room_users", {"users": active_users}, room=room_name)
     
     # 4. Welcome the user and alert the room
     await sio.emit("system_message", {"msg": f"Welcome to {room_name}, {ghost_name}."}, to=sid)
@@ -138,6 +166,10 @@ async def heartbeat(sid):
             statement = select(User).where(User.username == real_username)
             user = db.exec(statement).first()
             if user:
+                if user.is_banned:
+                    # Exorcise them immediately!
+                    await sio.disconnect(sid)
+                    return
                 user.auth_points += 1
                 db.add(user)
                 db.commit()

@@ -19,6 +19,9 @@ class User(SQLModel, table=True):
     # Reputation system
     auth_points: int = Field(default=0)
     
+    # Account status
+    is_banned: bool = Field(default=False)
+    
     # Account age
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
